@@ -11,6 +11,7 @@ os.chdir(os.path.dirname(os.path.abspath(__file__)))
 from tqdm import tqdm
 
 from scipy.stats import norm
+import scipy.stats as stats
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
@@ -180,6 +181,20 @@ plt.title('True and predicted values')
 plt.legend()
 plt.show()
 
-print(f"Pinball loss on the validation set: {mean_pinball_loss(y_true, pred_agg, alpha=config.quantile):.4f}")
+print(f"Pinball loss: {mean_pinball_loss(y_true, pred_agg, alpha=config.quantile):.4f}")
 
+####################
+# Plot residuals
 
+residuals = y_true - pred_agg
+
+plt.hist(residuals, bins=50)
+plt.title('Residuals histogram')
+plt.show()
+
+####################
+# QQ Plot of residuals
+
+stats.probplot(residuals.flatten(), dist="norm", plot=plt)
+plt.title('QQ Plot of residuals')
+plt.show()
