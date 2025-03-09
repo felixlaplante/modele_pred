@@ -16,7 +16,7 @@ import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
 from sklearn.model_selection import train_test_split
-from sklearn.metrics import mean_pinball_loss
+
 
 import torch
 import torch.nn as nn
@@ -28,7 +28,7 @@ import torch.optim as optim
 
 import config
 from prep import load_date_df, load_weather_df, load_fr_co_emissions_df, load_lag_df, load_seq, get_scalers
-from fun import train_loop, validate, Load_Xy, LSTM, predict, rollkalman, agg, PinballLoss
+from fun import train_loop, validate, Load_Xy, LSTM, predict, rollkalman, agg, PinballLoss, MAPELoss, RMSELoss
 
 #####################
 # Set seed
@@ -103,6 +103,8 @@ plt.title('RMSE Train and validation losses in log scale')
 plt.legend()
 plt.show()
 
+print()
+
 print(f"Final RMSE Train Loss: {train_losses[-1]:.4f}")
 print(f"Final RMSE Validation Loss: {val_losses[-1]:.4f}")
 
@@ -122,15 +124,36 @@ y_warmup_scaled = y_scaler.transform(y_warmup.values.reshape(-1, 1))
 # Predict
 
 _, pred_train = predict(model, train_X)
-pred_hidden_test, _ = predict(model, X_warmup_scaled)
+pred_hidden_test, pred_test = predict(model, X_warmup_scaled)
 
 ####################
 # Compute quantiles
 
 residuals = train_y[config.seq_length-1:] - pred_train
-quantile = np.quantile(residuals, config.quantile)
-errors = residuals + quantile
-B = np.maximum(errors * config.quantile, (1 - config.quantile) * errors).max()
+quantiles = np.quantile(residuals, np.array([0.5, 0.8]))
+errors = residuals + quantiles
+
+B = np.hstack([
+    (np.abs(residuals) / train_y[config.seq_length-1:]).max(),
+    np.abs(residuals).max(),
+    np.maximum(errors * np.array([0.5, 0.8]), (1 - np.array([0.5, 0.8])) * errors).max(axis=0)
+    ])
+
+shifts = [0, 0, 0, norm.ppf(0.8)]
+
+losses = ["MAPE", "RMSE", "Pinball 0.5", "Pinball 0.8"]
+loss_fns = [MAPELoss(), RMSELoss(), PinballLoss(0.5), PinballLoss(0.8)]
+
+####################
+# Static learning score
+
+print()
+
+for i in range(4):
+    pred = pred_test[config.W:] + shifts[i] * np.std(residuals) 
+    print(f"Static loss {losses[i]} on validation set: {loss_fns[i](torch.FloatTensor(y_scaler.inverse_transform(pred).reshape(-1, 1)), torch.FloatTensor(y_scaler.inverse_transform(val_y).reshape(-1, 1))):.4f}")
+
+print()
 
 ####################
 # Predict with online learning
@@ -148,40 +171,46 @@ pred_sigmas = np.empty((val_y.shape[0], grid.shape[0]))
 thetas = []
 I = np.eye(theta_0.shape[1])
 
-for i in range(grid.shape[0]):
-    alpha, beta = grid[i]
+for j in range(grid.shape[0]):
+    alpha, beta = grid[j]
     theta, mus, sigmas = rollkalman(pred_hidden_test, y_warmup_scaled, config.W, theta_0, alpha * I, beta * I)
-    pred_mus[:, i] = mus
-    pred_sigmas[:, i] = sigmas
+    pred_mus[:, j] = mus
+    pred_sigmas[:, j] = sigmas
     thetas.append(theta)
 
 ####################
 # Aggregate predictions
 
-loss_fn = PinballLoss(config.quantile)
+for i in range(4):
+    experts = pred_mus + shifts[i] * pred_sigmas
 
-experts = pred_mus + norm.ppf(config.quantile) * pred_sigmas
+    T, n = experts.shape
 
-T, n = experts.shape
+    eta = torch.sqrt(2 * torch.log(torch.tensor(n)) / T) / B[i]
 
-eta = torch.sqrt(2 * torch.log(torch.tensor(n)) / T) / B
+    pred_agg, weights = agg(torch.FloatTensor(experts), torch.FloatTensor(y_warmup_scaled[config.W:].reshape(-1, 1)), loss_fns[i], eta)
+    pred_agg = y_scaler.inverse_transform(pred_agg.detach().numpy().reshape(-1, 1))
+    weights = weights.detach().numpy()
 
-pred_agg, weights = agg(torch.FloatTensor(experts), torch.FloatTensor(y_warmup_scaled[config.W:]), loss_fn, eta)
-pred_agg = y_scaler.inverse_transform(pred_agg.detach().numpy().reshape(-1, 1))
-weights = weights.detach().numpy()
+    y_true = y_scaler.inverse_transform(val_y.reshape(-1, 1))
+
+    print(f"Dynamic loss {losses[i]} on validation set: {loss_fns[i](torch.FloatTensor(pred_agg), torch.FloatTensor(y_true)):.4f}")
 
 ####################
-# Plot prediction 
+# Plot parameters
 
-y_true = y_scaler.inverse_transform(val_y)
+plt.plot(thetas[len(thetas) // 2 + 1])
+plt.title('Dynamics of the parameters')
+plt.show()
+
+####################
+# Plot prediction
 
 plt.plot(y_true, label='True')
 plt.plot(pred_agg, label='Predicted')
 plt.title('True and predicted values')
 plt.legend()
 plt.show()
-
-print(f"Pinball loss on validation set: {mean_pinball_loss(y_true, pred_agg, alpha=config.quantile):.4f}")
 
 ####################
 # Plot residuals

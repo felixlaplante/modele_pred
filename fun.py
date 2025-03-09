@@ -45,6 +45,15 @@ class LSTM(nn.Module):
         return out, self.fc(out)
     
 
+class RMSELoss(nn.Module):
+    def __init__(self):
+        super().__init__()
+
+    def forward(self, y_pred, y_true):
+        loss = ((y_true - y_pred)**2 + 1e-8)
+        return torch.sqrt(loss.mean())
+    
+
 class PinballLoss(nn.Module):
     def __init__(self, quantile):
         super().__init__()
@@ -53,6 +62,16 @@ class PinballLoss(nn.Module):
     def forward(self, y_pred, y_true):
         errors = y_true - y_pred
         loss = torch.max(self.quantile * errors, (self.quantile - 1) * errors)
+        return loss.mean()
+
+
+class MAPELoss(nn.Module):
+    def __init__(self):
+        super().__init__()
+
+    def forward(self, y_pred, y_true):
+        epsilon = 1e-8  
+        loss = torch.abs((y_true - y_pred) / (y_true + epsilon))
         return loss.mean()
     
 
