@@ -116,13 +116,13 @@ def rollkalman(X_pred, y_true, W, theta_0, V0, Q):
         X = X_pred[i : i + W]
         x = X_pred[i + W]
         y = y_true[i + 1 : i + W + 1]
+        V += Q
         Vinv = np.linalg.inv(V)
         V = np.linalg.inv(X.T @ X + Vinv)
         theta = V @ (X.T @ y + Vinv @ thetas[i].reshape(-1, 1))
         thetas[i + 1] = theta.ravel()
         sigma2 = np.mean((y - X @ theta)**2)
         sigmas[i] = np.sqrt(sigma2 * (1 + x.T @ V @ x))
-        V += Q
 
     thetas = thetas[1:]
     mus = np.sum(X_pred[config.W:] * thetas, axis=1)
