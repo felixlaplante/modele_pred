@@ -180,6 +180,6 @@ plt.title('True and predicted values')
 plt.legend()
 plt.show()
 
-print(f"Pinball loss: {mean_pinball_loss(y_true, pred_agg, alpha=config.quantile):.4f}")
+print(f"Pinball loss on the validation set: {mean_pinball_loss(y_true, pred_agg, alpha=config.quantile):.4f}")
 
 
